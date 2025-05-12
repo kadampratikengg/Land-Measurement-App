@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Land Measurement App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    /* Blinking animation for the green dot */
+    .blinking-dot {
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      0% { opacity: 1; }
+      50% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Main App Component
+    function App() {
+      const [points, setPoints] = useState([]);
+      const [area, setArea] = useState(0);
+      const [map, setMap] = useState(null);
+      const [markerLayer, setMarkerLayer] = useState(null);
+      const [latInput, setLatInput] = useState('');
+      const [lngInput, setLngInput] = useState('');
+      const [selectedUnit, setSelectedUnit] = useState('square meters');
+      const [currentLocationMarker, setCurrentLocationMarker] = useState(null);
+
+      // Initialize Map
+      useEffect(() => {
+        const mapInstance = L.map('map').setView([28.6139, 77.2090], 5); // Center on New Delhi, India
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(mapInstance);
+        const layerGroup = L.layerGroup().addTo(mapInstance);
+        setMap(mapInstance);
+        setMarkerLayer(layerGroup);
+
+        return () => {
+          mapInstance.remove();
+        };
+      }, []);
+
+      // Track Current Location
+      useEffect(() => {
+        if (map && navigator.geolocation) {
+          // Custom icon for green blinking dot
+          const greenDotIcon = L.divIcon({
+            className: 'blinking-dot',
+            html: '<div style="background-color: green; width: 12px; height: 12px; border-radius: 50%;"></div>',
+            iconSize: [12, 12],
+            iconAnchor: [6, 6]
+          });
+
+          let watchId;
+
+          const updateLocation = (position) => {
+            const { latitude, longitude } = position.coords;
+
+            // Remove previous marker if it exists
+            if (currentLocationMarker) {
+              map.removeLayer(currentLocationMarker);
+            }
+
+            // Add new marker for current location
+            const marker = L.marker([latitude, longitude], { icon: greenDotIcon })
+              .addTo(map);
+            setCurrentLocationMarker(marker);
+
+            // Optionally center map on first location
+            if (!currentLocationMarker) {
+              map.setView([latitude, longitude], 13);
+            }
+          };
+
+          const errorHandler = (error) => {
+            console.error('Geolocation error:', error.message);
+          };
+
+          // Start watching position
+          watchId = navigator.geolocation.watchPosition(updateLocation, errorHandler, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          });
+
+          // Cleanup
+          return () => {
+            if (watchId) {
+              navigator.geolocation.clearWatch(watchId);
+            }
+            if (currentLocationMarker) {
+              map.removeLayer(currentLocationMarker);
+            }
+          };
+        }
+      }, [map, currentLocationMarker]);
+
+      // Update Map with Points
+      useEffect(() => {
+        if (map && markerLayer) {
+          markerLayer.clearLayers();
+          points.forEach((point, index) => {
+            const marker = L.marker([point.lat, point.lng], { draggable: true }).addTo(markerLayer);
+            marker.on('dragend', (e) => {
+              const newPos = e.target.getLatLng();
+              const newPoints = [...points];
+              newPoints[index] = { lat: newPos.lat, lng: newPos.lng };
+              setPoints(newPoints);
+            });
+          });
+          if (points.length > 1) {
+            const poly = L.polygon(points.map(p => [p.lat, p.lng])).addTo(markerLayer);
+            const areaInSquareMeters = calculateArea(points);
+            const convertedArea = convertArea(areaInSquareMeters, selectedUnit);
+            setArea(convertedArea);
+            map.fitBounds(poly.getBounds());
+          } else if (points.length === 1) {
+            map.setView([points[0].lat, points[0].lng], 13);
+          } else {
+            setArea(0);
+          }
+        }
+      }, [points, map, markerLayer, selectedUnit]);
+
+      // Calculate Area (in square meters)
+      const calculateArea = (points) => {
+        if (points.length < 3) return 0;
+        let area = 0;
+        for (let i = 0; i < points.length; i++) {
+          const j = (i + 1) % points.length;
+          area += points[i].lat * points[j].lng;
+          area -= points[j].lat * points[i].lng;
+        }
+        area = Math.abs(area) / 2;
+        // Convert to square meters (approximation)
+        return area * 111319.9 * 111319.9 * Math.cos(points[0].lat * Math.PI / 180);
+      };
+
+      // Convert Area to Selected Unit
+      const convertArea = (areaInSquareMeters, unit) => {
+        switch (unit) {
+          case 'square kilometers':
+            return (areaInSquareMeters * 0.000001).toFixed(4);
+          case 'hectares':
+            return (areaInSquareMeters * 0.0001).toFixed(4);
+          case 'acres':
+            return (areaInSquareMeters * 0.000247105).toFixed(4);
+          case 'square feet':
+            return (areaInSquareMeters * 10.7639).toFixed(2);
+          case 'square meters':
+          default:
+            return areaInSquareMeters.toFixed(2);
+        }
+      };
+
+      // Capture GPS Point
+      const capturePoint = () => {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const { latitude, longitude } = position.coords;
+              setPoints([...points, { lat: latitude, lng: longitude }]);
+            },
+            (error) => {
+              alert('Error getting GPS location: ' + error.message);
+            }
+          );
+        } else {
+          alert('Geolocation is not supported by this browser.');
+        }
+      };
+
+      // Add Manual Point
+      const addManualPoint = () => {
+        const lat = parseFloat(latInput);
+        const lng = parseFloat(lngInput);
+        if (isNaN(lat) || isNaN(lng)) {
+          alert('Please enter valid latitude and longitude values.');
+          return;
+        }
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          alert('Latitude must be between -90 and 90, Longitude must be between -180 and 180.');
+          return;
+        }
+        setPoints([...points, { lat, lng }]);
+        setLatInput('');
+        setLngInput('');
+      };
+
+      // Clear Points
+      const clearPoints = () => {
+        setPoints([]);
+        setArea(0);
+        if (markerLayer) markerLayer.clearLayers();
+      };
+
+      return (
+        <div className="flex flex-col h-screen p-4 bg-gray-100">
+          <h1 className="text-2xl font-bold mb-4">Land Measurement App</h1>
+          <div id="map" className="flex-grow mb-4 rounded-lg shadow"></div>
+          <div className="flex flex-col space-y-4 mb-4">
+            <div className="flex space-x-4">
+              <button
+                onClick={capturePoint}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              >
+                Capture GPS Point
+              </button>
+              <button
+                onClick={clearPoints}
+                className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+              >
+                Clear Points
+              </button>
+            </div>
+            <div className="flex flex-col space-y-2">
+              <h2 className="text-lg font-semibold">Add Manual Point</h2>
+              <div className="flex space-x-2">
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="Latitude (-90 to 90)"
+                  value={latInput}
+                  onChange={(e) => setLatInput(e.target.value)}
+                  className="border rounded px-2 py-1 w-1/3"
+                />
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="Longitude (-180 to 180)"
+                  value={lngInput}
+                  onChange={(e) => setLngInput(e.target.value)}
+                  className="border rounded px-2 py-1 w-1/3"
+                />
+                <button
+                  onClick={addManualPoint}
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                >
+                  Add Point
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col space-y-2">
+              <h2 className="text-lg font-semibold">Select Area Unit</h2>
+              <select
+                value={selectedUnit}
+                onChange={(e) => setSelectedUnit(e.target.value)}
+                className="border rounded px-2 py-1 w-1/2"
+              >
+                <option value="square meters">Square Meters</option>
+                <option value="square kilometers">Square Kilometers</option>
+                <option value="hectares">Hectares</option>
+                <option value="acres">Acres</option>
+                <option value="square feet">Square Feet</option>
+              </select>
+            </div>
+          </div>
+          <div className="text-lg">
+            <p>Points Captured: {points.length}</p>
+            <p>Area: {area} {selectedUnit}</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Render App
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
