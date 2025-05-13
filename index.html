@@ -160,6 +160,8 @@
             return (areaInSquareMeters * 0.000247105).toFixed(4);
           case 'square feet':
             return (areaInSquareMeters * 10.7639).toFixed(2);
+          case 'gunta':
+            return (areaInSquareMeters / 404.686).toFixed(4);
           case 'square meters':
           default:
             return areaInSquareMeters.toFixed(2);
@@ -264,6 +266,7 @@
                 <option value="square kilometers">Square Kilometers</option>
                 <option value="hectares">Hectares</option>
                 <option value="acres">Acres</option>
+                <option value="gunta">Gunta</option>
                 <option value="square feet">Square Feet</option>
               </select>
             </div>
